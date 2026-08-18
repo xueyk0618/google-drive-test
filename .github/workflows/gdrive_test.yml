@@ -1,1 +1,30 @@
+name: Test Google Drive Integration
 
+on:
+  push:
+    branches: [ main, master ]  # 推送到主分支时触发
+  workflow_dispatch:             # 允许在 GitHub 界面手动点击按钮触发测试
+
+jobs:
+  sync-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Google API Libraries
+        run: |
+          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      - name: Run Sync Script
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          python scripts/sync_to_gdrive.py

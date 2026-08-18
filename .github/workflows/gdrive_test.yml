@@ -2,8 +2,8 @@ name: Test Google Drive Integration
 
 on:
   push:
-    branches: [ main, master ]  # 推送到主分支时触发
-  workflow_dispatch:             # 允许在 GitHub 界面手动点击按钮触发测试
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   sync-test:
@@ -24,7 +24,7 @@ jobs:
 
       - name: Run Sync Script
         env:
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_SA_KEY_BASE64: ${{ secrets.GCP_SA_KEY_BASE64 }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           python scripts/sync_to_gdrive.py

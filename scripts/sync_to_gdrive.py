@@ -1,154 +1,111 @@
 import os
-import json
-import base64
-import re
 import zipfile
 from datetime import datetime
 
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 
 def get_credentials():
-    """读取 Google Service Account 凭据"""
+    client_id = os.environ.get("GDRIVE_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("GDRIVE_CLIENT_SECRET", "").strip()
+    refresh_token = os.environ.get("GDRIVE_REFRESH_TOKEN", "").strip()
 
-    b64_key = os.environ.get('GCP_SA_KEY_BASE64', '').strip()
-    raw_key = os.environ.get('GCP_SA_KEY', '').strip()
+    if not client_id:
+        raise ValueError("❌ GDRIVE_CLIENT_ID 未配置")
 
-    if b64_key:
-        print(f"🔍 检测到 GCP_SA_KEY_BASE64，长度: {len(b64_key)} 字符")
+    if not client_secret:
+        raise ValueError("❌ GDRIVE_CLIENT_SECRET 未配置")
 
-        clean_b64 = re.sub(r'[^\x00-\x7F]+', '', b64_key)
+    if not refresh_token:
+        raise ValueError("❌ GDRIVE_REFRESH_TOKEN 未配置")
 
-        try:
-            decoded_bytes = base64.b64decode(clean_b64)
-            key_info = json.loads(decoded_bytes.decode('utf-8'))
+    print("🔐 正在使用 Google OAuth 认证...")
 
-            print("✅ 成功从 Base64 解码并解析 GCP 凭据")
-
-            return key_info
-
-        except Exception as e:
-            print(f"❌ Base64 解码失败: {e}")
-            raise
-
-    if raw_key:
-        print("🔍 检测到 GCP_SA_KEY，尝试解析...")
-
-        try:
-            return json.loads(raw_key)
-
-        except Exception as e:
-            print(f"❌ 明文 JSON 解析失败: {e}")
-            raise
-
-    raise ValueError(
-        "❌ 未找到有效的 GCP 凭据！"
-        "请检查 GitHub Secrets 中的 GCP_SA_KEY_BASE64 配置。"
+    credentials = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=[
+            "https://www.googleapis.com/auth/drive"
+        ]
     )
 
+    print("✅ Google OAuth 凭据创建成功")
 
-def test_folder_access(service, folder_id):
-    """检查 Service Account 是否能够访问目标文件夹"""
-
-    print("🔎 正在检查 Google Drive 目标文件夹...")
-
-    try:
-        folder = service.files().get(
-            fileId=folder_id,
-            fields="id,name,mimeType,driveId",
-            supportsAllDrives=True
-        ).execute()
-
-        print("✅ Google Drive 文件夹访问成功")
-        print(f"📁 Folder Name: {folder.get('name')}")
-        print(f"🆔 Folder ID: {folder.get('id')}")
-
-        drive_id = folder.get("driveId")
-
-        if drive_id:
-            print(f"🗂️ Shared Drive ID: {drive_id}")
-        else:
-            print("⚠️ 当前文件夹没有 driveId，可能仍然位于 My Drive")
-
-        return folder
-
-    except Exception as e:
-        print("❌ 无法访问目标 Google Drive 文件夹")
-        raise
+    return credentials
 
 
 def main():
 
-    # ==========================================================
-    # 1. 获取 Google Drive Folder ID
-    # ==========================================================
+    # =========================================================
+    # 1. 获取目标 Google Drive 文件夹
+    # =========================================================
 
-    folder_id = os.environ.get('GDRIVE_FOLDER_ID', '').strip()
+    folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
 
     if not folder_id:
         raise ValueError(
             "❌ GDRIVE_FOLDER_ID 环境变量为空！"
-            "请检查 GitHub Secrets。"
         )
 
-    # ==========================================================
-    # 2. Google Drive 认证
-    # ==========================================================
+    # =========================================================
+    # 2. Google Drive OAuth 认证
+    # =========================================================
 
-    key_info = get_credentials()
-
-    scopes = [
-        'https://www.googleapis.com/auth/drive'
-    ]
-
-    creds = service_account.Credentials.from_service_account_info(
-        key_info,
-        scopes=scopes
-    )
+    credentials = get_credentials()
 
     service = build(
-        'drive',
-        'v3',
-        credentials=creds
+        "drive",
+        "v3",
+        credentials=credentials
     )
 
     print("✅ Google Drive API 认证成功")
 
-    # ==========================================================
+    # =========================================================
     # 3. 检查目标文件夹
-    # ==========================================================
+    # =========================================================
 
-    folder = test_folder_access(
-        service,
-        folder_id
-    )
+    print("🔎 正在检查 Google Drive 目标文件夹...")
 
-    # ==========================================================
-    # 4. 打包当前 GitHub 仓库
-    # ==========================================================
+    folder = service.files().get(
+        fileId=folder_id,
+        fields="id,name,mimeType,parents"
+    ).execute()
+
+    print("✅ Google Drive 文件夹访问成功")
+    print(f"📁 Folder Name: {folder.get('name')}")
+    print(f"🆔 Folder ID: {folder.get('id')}")
+
+    # =========================================================
+    # 4. 打包 GitHub 仓库
+    # =========================================================
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     zip_filename = f"backup_{timestamp}.zip"
 
     exclude_dirs = {
-        '.git',
-        '.github',
-        '__pycache__',
-        'venv'
+        ".git",
+        ".github",
+        "__pycache__",
+        "venv",
+        ".venv"
     }
 
     print(f"📦 正在打包仓库代码为 {zip_filename}...")
 
     with zipfile.ZipFile(
         zip_filename,
-        'w',
+        "w",
         zipfile.ZIP_DEFLATED
     ) as zipf:
 
-        for root, dirs, files in os.walk('.'):
+        for root, dirs, files in os.walk("."):
 
             dirs[:] = [
                 d for d in dirs
@@ -157,7 +114,6 @@ def main():
 
             for file in files:
 
-                # 防止 ZIP 把自己打包进去
                 if file == zip_filename:
                     continue
 
@@ -166,61 +122,61 @@ def main():
                     file
                 )
 
+                arcname = os.path.relpath(
+                    file_path,
+                    "."
+                )
+
                 zipf.write(
                     file_path,
-                    os.path.relpath(
-                        file_path,
-                        '.'
-                    )
+                    arcname
                 )
 
     print(f"✅ 打包完成: {zip_filename}")
 
-    # ==========================================================
-    # 5. 上传到 Google Shared Drive
-    # ==========================================================
+    # =========================================================
+    # 5. 上传 Google Drive
+    # =========================================================
 
-    print("🚀 正在上传至 Google Drive 目标目录...")
+    print("🚀 正在上传至 Google Drive...")
 
     file_metadata = {
-        'name': zip_filename,
-        'parents': [folder_id]
+        "name": zip_filename,
+        "parents": [folder_id]
     }
 
     media = MediaFileUpload(
         zip_filename,
-        mimetype='application/zip',
+        mimetype="application/zip",
         resumable=True
     )
 
-    file = service.files().create(
+    uploaded_file = service.files().create(
         body=file_metadata,
         media_body=media,
-        fields='id,name,parents,driveId',
-        supportsAllDrives=True
+        fields="id,name,parents"
     ).execute()
 
-    # ==========================================================
-    # 6. 输出上传结果
-    # ==========================================================
+    print()
+    print("=" * 60)
+    print("🎉 上传成功！")
+    print("=" * 60)
+    print(f"📄 文件名: {uploaded_file.get('name')}")
+    print(f"🆔 File ID: {uploaded_file.get('id')}")
+    print(f"📁 Parent Folder: {uploaded_file.get('parents')}")
+    print("=" * 60)
 
-    print("")
-    print("🎉🎉🎉 上传成功！")
-    print(f"📄 文件名: {file.get('name')}")
-    print(f"🆔 File ID: {file.get('id')}")
-    print(f"📁 Parent Folder: {file.get('parents')}")
-    print(f"🗂️ Shared Drive ID: {file.get('driveId')}")
-    print("")
-
-    # ==========================================================
-    # 7. 删除 GitHub Runner 上的临时 ZIP
-    # ==========================================================
+    # =========================================================
+    # 6. 删除本地临时文件
+    # =========================================================
 
     if os.path.exists(zip_filename):
         os.remove(zip_filename)
 
-        print("🧹 本地临时 ZIP 文件已清理")
+        print(
+            f"🧹 已删除本地临时文件: {zip_filename}"
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
